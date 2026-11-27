@@ -3,9 +3,13 @@ package com.example.eonmobiletv.player
 import android.content.Context
 import android.media.AudioManager
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackGroup
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -26,6 +30,13 @@ data class PlayerState(
     val isBuffering: Boolean = false,
     val retryMessage: String? = null,
     val retryCount: Int = 0
+)
+
+data class TrackOption(
+    val name: String,
+    val detail: String?,
+    val isSelected: Boolean,
+    val trackGroup: TrackGroup
 )
 
 @UnstableApi
@@ -63,6 +74,7 @@ class EonPlayerController(
     val playerState: StateFlow<PlayerState> = _playerState.asStateFlow()
 
     private var currentChannel: TvChannel? = null
+    private var currentUrl: String? = null
     private var pausedByUser = false
     private var retryJob: Job? = null
 
@@ -91,9 +103,10 @@ class EonPlayerController(
         exoPlayer.addListener(playerListener)
     }
 
-    fun playChannel(channel: TvChannel) {
+    fun playChannel(channel: TvChannel, streamUrl: String = channel.streamUrl) {
         retryJob?.cancel()
         currentChannel = channel
+        currentUrl = streamUrl
         pausedByUser = false
         _playerState.update {
             it.copy(
@@ -102,7 +115,7 @@ class EonPlayerController(
                 retryCount = 0
             )
         }
-        exoPlayer.setMediaItem(MediaItem.fromUri(channel.streamUrl))
+        exoPlayer.setMediaItem(MediaItem.fromUri(streamUrl))
         exoPlayer.prepare()
         exoPlayer.playWhenReady = true
         exoPlayer.play()
@@ -115,17 +128,35 @@ class EonPlayerController(
         } else {
             pausedByUser = false
             if (exoPlayer.playbackState == Player.STATE_IDLE || _playerState.value.retryMessage != null) {
-                currentChannel?.let { playChannel(it) } ?: exoPlayer.play()
+                val channel = currentChannel
+                val url = currentUrl
+                if (channel != null && url != null) playChannel(channel, url) else exoPlayer.play()
             } else {
                 exoPlayer.play()
             }
         }
     }
 
+    fun pauseForSleepTimer() {
+        pausedByUser = true
+        exoPlayer.pause()
+    }
+
+    fun seekBy(deltaMs: Long) {
+        if (exoPlayer.playbackState == Player.STATE_IDLE) return
+        val duration = exoPlayer.duration
+        if (duration == C.TIME_UNSET) return
+        val upperBound = if (duration > 0) duration else exoPlayer.currentPosition
+        val target = (exoPlayer.currentPosition + deltaMs).coerceIn(0L, upperBound)
+        exoPlayer.seekTo(target)
+    }
+
     fun onHostStart() {
         if (!pausedByUser && currentChannel != null) {
             if (exoPlayer.playbackState == Player.STATE_IDLE || _playerState.value.retryMessage != null) {
-                currentChannel?.let { playChannel(it) }
+                val channel = currentChannel
+                val url = currentUrl
+                if (channel != null && url != null) playChannel(channel, url)
             } else {
                 exoPlayer.play()
             }
@@ -151,6 +182,79 @@ class EonPlayerController(
         return target.toFloat() / max.toFloat()
     }
 
+    // ---------- Аудио / субтитри потоци ----------
+
+    fun audioTrackOptions(): List<TrackOption> =
+        exoPlayer.currentTracks.groups
+            .filter { it.type == C.TRACK_TYPE_AUDIO && it.isTrackSupported(0) }
+            .map { group ->
+                val format = group.getTrackFormat(0)
+                TrackOption(
+                    name = format.label?.takeIf { it.isNotBlank() }
+                        ?: format.language?.takeIf { it.isNotBlank() }?.replaceFirstChar { it.uppercase() }
+                        ?: "Аудио поток",
+                    detail = audioLayoutLabel(format),
+                    isSelected = group.isTrackSelected(0),
+                    trackGroup = group.mediaTrackGroup
+                )
+            }
+
+    fun textTrackOptions(): List<TrackOption> =
+        exoPlayer.currentTracks.groups
+            .filter { it.type == C.TRACK_TYPE_TEXT && it.isTrackSupported(0) }
+            .map { group ->
+                val format = group.getTrackFormat(0)
+                TrackOption(
+                    name = format.label?.takeIf { it.isNotBlank() }
+                        ?: format.language?.takeIf { it.isNotBlank() }?.replaceFirstChar { it.uppercase() }
+                        ?: "Субтитри",
+                    detail = null,
+                    isSelected = group.isTrackSelected(0),
+                    trackGroup = group.mediaTrackGroup
+                )
+            }
+
+    fun selectAudioTrack(option: TrackOption) {
+        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+            .buildUpon()
+            .setOverrideForType(TrackSelectionOverride(option.trackGroup, 0))
+            .build()
+    }
+
+    fun selectTextTrack(option: TrackOption) {
+        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+            .buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            .setOverrideForType(TrackSelectionOverride(option.trackGroup, 0))
+            .build()
+    }
+
+    fun disableSubtitles() {
+        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+            .buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+            .build()
+    }
+
+    private fun audioLayoutLabel(format: Format): String {
+        val layout = when (format.channelCount ?: 0) {
+            1 -> "Моно"
+            2 -> "Стерео"
+            6 -> "5.1"
+            8 -> "7.1"
+            else -> null
+        }
+        val codec = when (format.sampleMimeType) {
+            MimeTypes.AUDIO_AAC -> "AAC"
+            MimeTypes.AUDIO_AC3 -> "AC-3"
+            MimeTypes.AUDIO_E_AC3 -> "E-AC-3"
+            MimeTypes.AUDIO_FLAC -> "FLAC"
+            MimeTypes.AUDIO_OPUS -> "Opus"
+            else -> null
+        }
+        return listOfNotNull(layout, codec).joinToString(" • ")
+    }
+
     private fun triggerAutoRetry(reason: String) {
         val channel = currentChannel ?: return
         retryJob?.cancel()
@@ -167,7 +271,7 @@ class EonPlayerController(
                     )
                 }
                 delay(waitMs)
-                exoPlayer.setMediaItem(MediaItem.fromUri(channel.streamUrl))
+                exoPlayer.setMediaItem(MediaItem.fromUri(currentUrl ?: channel.streamUrl))
                 exoPlayer.prepare()
                 exoPlayer.play()
                 delay(3_500L)

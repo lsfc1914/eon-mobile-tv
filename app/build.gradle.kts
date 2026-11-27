@@ -1,5 +1,4 @@
 plugins {
-    id("org.jetbrains.kotlin.plugin.serialization")
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -13,8 +12,8 @@ android {
         applicationId = "com.example.eonmobiletv"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     buildFeatures {
@@ -31,15 +30,6 @@ android {
 }
 
 dependencies {
-    implementation("androidx.media3:media3-ui:1.4.1")
-    implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
-    implementation("androidx.media3:media3-exoplayer:1.4.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.squareup.retrofit2:converter-kotlinx-serialization:2.11.0")
-    implementation("com.squareup.retrofit2:retrofit:2.11.0")
-    val media3Version = "1.5.1"
-
     implementation(platform("androidx.compose:compose-bom:2025.02.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
@@ -48,6 +38,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
 
+    val media3Version = "1.5.1"
     implementation("androidx.media3:media3-exoplayer:$media3Version")
     implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
     implementation("androidx.media3:media3-exoplayer-dash:$media3Version")

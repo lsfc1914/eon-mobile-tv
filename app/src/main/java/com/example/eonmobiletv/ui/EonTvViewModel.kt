@@ -4,11 +4,13 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.eonmobiletv.data.CatchupHelper
 import com.example.eonmobiletv.data.EonPreferencesRepository
 import com.example.eonmobiletv.data.EpgCacheStore
 import com.example.eonmobiletv.data.GzipStreamHelper
 import com.example.eonmobiletv.data.M3uParser
 import com.example.eonmobiletv.data.XmlTvParser
+import com.example.eonmobiletv.model.CatchupRequest
 import com.example.eonmobiletv.model.EpgProgramme
 import com.example.eonmobiletv.model.TvChannel
 import com.example.eonmobiletv.worker.EpgRefreshWorker
@@ -16,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
@@ -37,6 +40,16 @@ class EonTvViewModel(application: Application) : AndroidViewModel(application) {
     private val activeChannelId = MutableStateFlow<String?>(null)
     private val isLoading = MutableStateFlow(false)
     private val alertText = MutableStateFlow<String?>(null)
+    private val playTick = MutableStateFlow(0)
+    private val sleepTimerEndsAt = MutableStateFlow<Long?>(null)
+    private val catchupRequest = MutableStateFlow<CatchupRequest?>(null)
+
+    val epgMapState: StateFlow<Map<String, List<EpgProgramme>>> = epgByTvgId.asStateFlow()
+    val playTickState: StateFlow<Int> = playTick.asStateFlow()
+    val sleepTimerEndsAtState: StateFlow<Long?> = sleepTimerEndsAt.asStateFlow()
+    val catchupRequestState: StateFlow<CatchupRequest?> = catchupRequest.asStateFlow()
+
+    val totalChannelCount: Int get() = allChannels.value.size
 
     private val enrichedChannels: StateFlow<List<TvChannel>> = combine(
         allChannels,
@@ -125,7 +138,15 @@ class EonTvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectChannel(channel: TvChannel) {
+        catchupRequest.value = null
         activeChannelId.value = channel.id
+        playTick.value += 1
+    }
+
+    fun selectChannelByNumber(number: Int): Boolean {
+        val target = allChannels.value.firstOrNull { it.number == number } ?: return false
+        selectChannel(target)
+        return true
     }
 
     fun stepChannel(delta: Int) {
@@ -133,7 +154,41 @@ class EonTvViewModel(application: Application) : AndroidViewModel(application) {
         if (list.isEmpty()) return
         val currentIdx = list.indexOfFirst { it.id == activeChannel.value?.id }.coerceAtLeast(0)
         val targetIdx = (currentIdx + delta + list.size) % list.size
-        activeChannelId.value = list[targetIdx].id
+        selectChannel(list[targetIdx])
+    }
+
+    fun resumeLive() {
+        catchupRequest.value = null
+        playTick.value += 1
+    }
+
+    fun requestCatchup(channel: TvChannel, programme: EpgProgramme) {
+        val url = CatchupHelper.buildUrl(channel, programme.startTime, programme.endTime, Instant.now())
+        if (url == null) {
+            alertText.value = "Архивът за „${programme.title}“ не е наличен (каналът не поддържа catch-up или периодът е изтекъл)."
+            return
+        }
+        catchupRequest.value = CatchupRequest(
+            channel = channel,
+            streamUrl = url,
+            programmeTitle = programme.title
+        )
+    }
+
+    fun consumeCatchup() {
+        catchupRequest.value = null
+    }
+
+    fun startSleepTimer(minutes: Int) {
+        if (minutes <= 0) {
+            cancelSleepTimer()
+            return
+        }
+        sleepTimerEndsAt.value = System.currentTimeMillis() + minutes * 60_000L
+    }
+
+    fun cancelSleepTimer() {
+        sleepTimerEndsAt.value = null
     }
 
     fun selectCategory(category: String) {
@@ -262,8 +317,10 @@ class EonTvViewModel(application: Application) : AndroidViewModel(application) {
             M3uParser.parse(rawM3u)
         }
         allChannels.value = parsed
+        catchupRequest.value = null
         if (selectFirst && parsed.isNotEmpty()) {
             activeChannelId.value = parsed.first().id
+            playTick.value += 1
         }
         if (parsed.isEmpty()) {
             alertText.value = "Плейлистът ($title) не съдържа валидни потоци."

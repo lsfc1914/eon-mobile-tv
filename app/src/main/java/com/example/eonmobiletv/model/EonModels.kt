@@ -25,6 +25,14 @@ data class TvChannel(
     val groupTitle: String = "Български",
     val tvgId: String? = null,
     val isFavorite: Boolean = false,
+    val catchupSource: String? = null,
+    val catchupDays: Int = 0,
     val currentProgramme: EpgProgramme? = null,
     val nextProgramme: EpgProgramme? = null
+)
+
+data class CatchupRequest(
+    val channel: TvChannel,
+    val streamUrl: String,
+    val programmeTitle: String
 )

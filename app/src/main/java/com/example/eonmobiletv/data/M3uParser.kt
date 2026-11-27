@@ -17,6 +17,8 @@ object M3uParser {
         var pendingLogo: String? = null
         var pendingGroup: String = "Основни"
         var pendingTvgId: String? = null
+        var pendingCatchupSource: String? = null
+        var pendingCatchupDays: Int = 0
         var number = 1
 
         for (line in lines) {
@@ -27,6 +29,15 @@ object M3uParser {
                 pendingLogo = attrs["tvg-logo"]?.takeIf { it.isNotBlank() }
                 pendingGroup = attrs["group-title"]?.takeIf { it.isNotBlank() } ?: "Основни"
                 pendingTvgId = attrs["tvg-id"]?.takeIf { it.isNotBlank() }
+                pendingCatchupSource = attrs["catchup-source"]?.takeIf { it.isNotBlank() }
+
+                val catchupRaw = attrs["catchup"]?.takeIf { it.isNotBlank() }
+                val catchupDaysExplicit = attrs["catchup-days"]?.toIntOrNull()?.coerceAtLeast(0)
+                pendingCatchupDays = when {
+                    catchupDaysExplicit != null -> catchupDaysExplicit
+                    catchupRaw != null -> catchupRaw.toIntOrNull() ?: 7
+                    else -> 0
+                }
 
                 val commaIdx = line.lastIndexOf(',')
                 pendingName = if (commaIdx != -1 && commaIdx + 1 < line.length) {
@@ -48,6 +59,8 @@ object M3uParser {
                         logoUrl = pendingLogo,
                         groupTitle = pendingGroup,
                         tvgId = pendingTvgId,
+                        catchupSource = pendingCatchupSource,
+                        catchupDays = pendingCatchupDays,
                         currentProgramme = nowProg,
                         nextProgramme = nextProg
                     )
@@ -57,6 +70,8 @@ object M3uParser {
                 pendingLogo = null
                 pendingGroup = "Основни"
                 pendingTvgId = null
+                pendingCatchupSource = null
+                pendingCatchupDays = 0
             }
         }
         return channels
